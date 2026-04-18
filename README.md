@@ -1,6 +1,6 @@
 # ⏰ file-time-magic
 
-OpenClaw & SkillHub skill — 修改文件时间戳与 Office 编辑时长，确保所有时间属性逻辑一致、真实可信。
+OpenClaw & SkillHub skill — 修改文件时间戳与 Office 编辑时长.
 
 ## ✨ 核心能力
 
