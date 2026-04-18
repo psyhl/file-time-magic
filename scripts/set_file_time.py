@@ -1,13 +1,19 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-file-time-magic 鈥?鏂囦欢鏃堕棿灞炴€т慨鏀硅剼鏈?v1.1
+file-time-magic — 文件时间属性修改脚本 v1.1
 
-鍔熻兘锛?1. 瑙ｆ瀽鐢ㄦ埛杈撳叆鐨勭紪杈戞椂闀匡紙鏀寔澶氱鏍煎紡锛?2. 鏀寔鐢ㄦ埛鎸囧畾鍒涘缓鏃堕棿銆佷慨鏀规椂闂?3. 璁＄畻闅忔満鍖栫殑鏃堕棿锛堝垎閽熸湁璇樊锛岀鏁伴殢鏈猴級
-4. 淇敼 Office 鏂囦欢鍐呴儴 XML锛圱otalTime 灞炴€?+ core.xml 鍒涘缓/淇敼鏃堕棿锛?5. 璁剧疆鏂囦欢绯荤粺鏃堕棿灞炴€?
-浣跨敤锛?  python set_file_time.py --file "鏂囦欢璺緞" --edit-duration "2灏忔椂"
-  python set_file_time.py --file "鏂囦欢璺緞" --create-time "2024-01-15 09:30:00" --edit-duration "3灏忔椂"
-  python set_file_time.py --file "鏂囦欢璺緞" --modify-time "2026-04-18 14:00:00" --edit-duration "90鍒嗛挓"
-  python set_file_time.py --file "鏂囦欢璺緞" --create-time "2024-01-15 09:00:00" --modify-time "2026-04-18 14:00:00"
+功能：
+1. 解析用户输入的编辑时长（支持多种格式）
+2. 支持用户指定创建时间、修改时间
+3. 计算随机化的时间（分钟有误差，秒数随机）
+4. 修改 Office 文件内部 XML（TotalTime 属性 + core.xml 创建/修改时间）
+5. 设置文件系统时间属性
+
+使用：
+  python set_file_time.py --file "文件路径" --edit-duration "2小时"
+  python set_file_time.py --file "文件路径" --create-time "2024-01-15 09:30:00" --edit-duration "3小时"
+  python set_file_time.py --file "文件路径" --modify-time "2026-04-18 14:00:00" --edit-duration "90分钟"
+  python set_file_time.py --file "文件路径" --create-time "2024-01-15 09:00:00" --modify-time "2026-04-18 14:00:00"
 """
 
 import argparse
@@ -26,35 +32,40 @@ from pathlib import Path
 
 def parse_duration(text: str) -> int:
     """
-    瑙ｆ瀽鐢ㄦ埛杈撳叆鐨勬椂闀匡紝杩斿洖鍒嗛挓鏁帮紙鏁存暟锛?
-    鏀寔鏍煎紡锛?    - "2灏忔椂"銆?2灏忔椂30鍒?銆?涓ゅ皬鏃跺崐"
-    - "120鍒嗛挓"銆?90"锛堢函鏁板瓧榛樿鍒嗛挓锛?    - "3h"銆?2h30m"銆?150m"
-    - "1.5灏忔椂"
+    解析用户输入的时长，返回分钟数（整数）
+
+    支持格式：
+    - "2小时"、"2小时30分"、"两小时半"
+    - "120分钟"、"90"（纯数字默认分钟）
+    - "3h"、"2h30m"、"150m"
+    - "1.5小时"
     """
     text = text.strip().lower()
 
-    # 鏇挎崲涓枃
-    text = text.replace("涓?, "2")
-    text = text.replace("鍗?, ".5")
-    text = text.replace("灏忔椂", "h")
-    text = text.replace("鍒嗛挓", "m")
-    text = text.replace("鍒?, "m")
-    text = text.replace("鏃?, "h")
+    # 替换中文
+    text = text.replace("两", "2")
+    text = text.replace("半", ".5")
+    text = text.replace("小时", "h")
+    text = text.replace("分钟", "m")
+    text = text.replace("分", "m")
+    text = text.replace("时", "h")
 
     total_minutes = 0
 
-    # 鍏堝尮閰?"Xh Ym" 鎴?"XhYm" 绛夊鍚堟牸寮?    # 渚嬪 "2h30m", "1.5h", "30m"
-    # 鍖归厤鎵€鏈夋暟瀛?鍗曚綅缁勫悎
+    # 先匹配 "Xh Ym" 或 "XhYm" 等复合格式
+    # 例如 "2h30m", "1.5h", "30m"
+    # 匹配所有数字+单位组合
     pattern = r'([\d.]+)\s*h'
     h_matches = re.findall(pattern, text)
     for val in h_matches:
         total_minutes += int(float(val) * 60)
 
-    pattern = r'([\d.]+)\s*m(?!o)'  # m 涓嶅尮閰?"mo" 寮€澶?    m_matches = re.findall(pattern, text)
+    pattern = r'([\d.]+)\s*m(?!o)'  # m 不匹配 "mo" 开头
+    m_matches = re.findall(pattern, text)
     for val in m_matches:
         total_minutes += int(float(val))
 
-    # 濡傛灉娌″尮閰嶅埌浠讳綍鍐呭锛屽皾璇曠函鏁板瓧锛堥粯璁ゅ垎閽燂級
+    # 如果没匹配到任何内容，尝试纯数字（默认分钟）
     if total_minutes == 0:
         try:
             total_minutes = int(float(text))
@@ -66,7 +77,7 @@ def parse_duration(text: str) -> int:
 
 def parse_time_str(text: str) -> datetime:
     """
-    瑙ｆ瀽鏃堕棿瀛楃涓诧紝鏀寔澶氱鏍煎紡
+    解析时间字符串，支持多种格式
     """
     text = text.strip()
 
@@ -96,11 +107,11 @@ def parse_time_str(text: str) -> datetime:
         except ValueError:
             continue
 
-    raise ValueError(f"鏃犳硶瑙ｆ瀽鏃堕棿: {text}")
+    raise ValueError(f"无法解析时间: {text}")
 
 
 def randomize_duration(minutes: int) -> tuple:
-    """闅忔満鍖栨椂闀匡紝杩斿洖 (瀹為檯鍒嗛挓鏁? 绉掓暟)"""
+    """随机化时长，返回 (实际分钟数, 秒数)"""
     if minutes >= 60:
         actual_minutes = minutes + random.randint(-5, 5)
     else:
@@ -111,12 +122,12 @@ def randomize_duration(minutes: int) -> tuple:
 
 
 def is_work_hour(hour: int) -> bool:
-    """妫€鏌ユ槸鍚﹀湪宸ヤ綔鏃堕棿锛?8:00 - 22:00锛?""
+    """检查是否在工作时间（08:00 - 22:00）"""
     return 8 <= hour <= 22
 
 
 def adjust_to_work_time(dt: datetime) -> datetime:
-    """灏嗘椂闂磋皟鏁村埌宸ヤ綔鏃堕棿鑼冨洿"""
+    """将时间调整到工作时间范围"""
     if dt.hour < 8:
         return dt.replace(hour=random.randint(8, 10), minute=random.randint(0, 59))
     elif dt.hour > 22:
@@ -125,7 +136,7 @@ def adjust_to_work_time(dt: datetime) -> datetime:
 
 
 def add_random_seconds(dt: datetime) -> datetime:
-    """娣诲姞闅忔満绉掓暟"""
+    """添加随机秒数"""
     return dt.replace(second=random.randint(0, 59))
 
 
@@ -138,7 +149,8 @@ def calculate_times_v2(
     base_time: datetime = None
 ) -> dict:
     """
-    璁＄畻鎵€鏈夋椂闂村睘鎬?    """
+    计算所有时间属性
+    """
     if base_time is None:
         base_time = datetime.now()
 
@@ -150,7 +162,8 @@ def calculate_times_v2(
         'edit_seconds': edit_seconds if edit_seconds is not None else random.randint(0, 59)
     }
 
-    # 鎯呭喌1锛氱敤鎴锋寚瀹氫簡鍒涘缓鏃堕棿鍜屼慨鏀规椂闂?    if create_time and modify_time:
+    # 情况1：用户指定了创建时间和修改时间
+    if create_time and modify_time:
         result['create'] = add_random_seconds(create_time)
         result['modify'] = add_random_seconds(modify_time)
         if edit_minutes is None:
@@ -158,18 +171,21 @@ def calculate_times_v2(
             result['edit_minutes'] = int(duration.total_seconds() / 60)
             result['edit_seconds'] = random.randint(0, 59)
 
-    # 鎯呭喌2锛氱敤鎴锋寚瀹氫簡鍒涘缓鏃堕棿鍜岀紪杈戞椂闀?    elif create_time and edit_minutes:
+    # 情况2：用户指定了创建时间和编辑时长
+    elif create_time and edit_minutes:
         result['create'] = add_random_seconds(create_time)
         result['modify'] = add_random_seconds(
             result['create'] + timedelta(minutes=edit_minutes + random.randint(0, 2))
         )
 
-    # 鎯呭喌3锛氱敤鎴锋寚瀹氫簡淇敼鏃堕棿鍜岀紪杈戞椂闀?    elif modify_time and edit_minutes:
+    # 情况3：用户指定了修改时间和编辑时长
+    elif modify_time and edit_minutes:
         result['modify'] = add_random_seconds(modify_time)
         calc_create = result['modify'] - timedelta(minutes=edit_minutes + random.randint(0, 2))
         result['create'] = add_random_seconds(adjust_to_work_time(calc_create))
 
-    # 鎯呭喌4锛氱敤鎴峰彧鎸囧畾浜嗙紪杈戞椂闀?    elif edit_minutes:
+    # 情况4：用户只指定了编辑时长
+    elif edit_minutes:
         buffer_minutes = random.randint(5, 30)
         result['create'] = base_time - timedelta(
             minutes=edit_minutes + buffer_minutes,
@@ -181,7 +197,8 @@ def calculate_times_v2(
             result['create'] + timedelta(minutes=edit_minutes + random.randint(0, 2))
         )
 
-    # 鎯呭喌5锛氫粈涔堥兘娌℃寚瀹?    else:
+    # 情况5：什么都没指定
+    else:
         default_edit = random.randint(30, 60)
         result['edit_minutes'] = default_edit
         buffer_minutes = random.randint(5, 30)
@@ -193,7 +210,7 @@ def calculate_times_v2(
             result['create'] + timedelta(minutes=default_edit)
         )
 
-    # 璁块棶鏃堕棿
+    # 访问时间
     if access_time:
         result['access'] = add_random_seconds(access_time)
     else:
@@ -201,13 +218,14 @@ def calculate_times_v2(
             result['modify'] + timedelta(minutes=random.randint(3, 15))
         )
 
-    # 纭繚鏃堕棿閫昏緫姝ｇ‘
+    # 确保时间逻辑正确
     if result['create'] > result['modify']:
         result['modify'] = result['create'] + timedelta(minutes=result['edit_minutes'] or 30)
     if result['modify'] > result['access']:
         result['access'] = result['modify'] + timedelta(minutes=random.randint(3, 15))
 
-    # 鑷姩璁＄畻妯″紡涓嬶細纭繚涓嶈秴鍑哄熀鍑嗘椂闂?    user_specified_times = create_time is not None or modify_time is not None
+    # 自动计算模式下：确保不超出基准时间
+    user_specified_times = create_time is not None or modify_time is not None
     if not user_specified_times and result['access'] > base_time:
         total_span = (result['access'] - result['create']).total_seconds()
         allowed_span = (base_time - result['create']).total_seconds()
@@ -221,16 +239,17 @@ def calculate_times_v2(
         else:
             result['access'] = min(result['access'], base_time - timedelta(minutes=random.randint(1, 5)))
 
-    # 楠岃瘉锛氱紪杈戞椂闀夸笉瓒呰繃鏂囦欢瀛樺湪鏃堕棿
+    # 验证：编辑时长不超过文件存在时间
     file_exist_minutes = int((result['modify'] - result['create']).total_seconds() / 60)
     if result['edit_minutes'] and result['edit_minutes'] > file_exist_minutes:
         result['edit_minutes'] = max(1, file_exist_minutes - random.randint(1, 5))
         result['edit_seconds'] = random.randint(0, 59)
 
-    # 闈炲伐浣滄椂闂磋鍛?    if result['create'] and not is_work_hour(result['create'].hour):
+    # 非工作时间警告
+    if result['create'] and not is_work_hour(result['create'].hour):
         result['work_time_warning'] = (
-            f"鍒涘缓鏃堕棿 {result['create'].strftime('%H:%M')} "
-            f"涓嶅湪甯歌宸ヤ綔鏃堕棿锛?8:00-22:00锛夛紝宸茶嚜鍔ㄨ皟鏁?
+            f"创建时间 {result['create'].strftime('%H:%M')} "
+            f"不在常规工作时间（08:00-22:00），已自动调整"
         )
 
     return result
@@ -240,21 +259,26 @@ def modify_office_internal(file_path: str, edit_minutes: int,
                              create_dt: datetime = None,
                              modify_dt: datetime = None) -> bool:
     """
-    淇敼 Office 鏂囦欢锛坉ocx/pptx/xlsx锛夊唴閮ㄥ睘鎬?    - TotalTime锛堢紪杈戞椂闀匡級锛氭潵鑷?docProps/app.xml
-    - 鍒涘缓鏃堕棿銆佷慨鏀规椂闂达細鏉ヨ嚜 docProps/core.xml
+    修改 Office 文件（docx/pptx/xlsx）内部属性
+    - TotalTime（编辑时长）：来自 docProps/app.xml
+    - 创建时间、修改时间：来自 docProps/core.xml
 
     Args:
-        file_path:  鏂囦欢璺緞
-        edit_minutes:  缂栬緫鏃堕暱锛堝垎閽燂級
-        create_dt:     鍒涘缓鏃堕棿锛坉atetime锛?        modify_dt:     淇敼鏃堕棿锛坉atetime锛?    """
+        file_path:  文件路径
+        edit_minutes:  编辑时长（分钟）
+        create_dt:     创建时间（datetime）
+        modify_dt:     修改时间（datetime）
+    """
     ext = os.path.splitext(file_path)[1].lower()
     if ext not in ['.docx', '.pptx', '.xlsx']:
         return False
 
-    # 浣跨敤 PID 鍖哄垎涓存椂鐩綍锛岄伩鍏嶅苟鍙戝啿绐?    tmp_dir = os.path.join(os.environ.get('TEMP', '/tmp'),
+    # 使用 PID 区分临时目录，避免并发冲突
+    tmp_dir = os.path.join(os.environ.get('TEMP', '/tmp'),
                            '_ftm_' + str(os.getpid()) + '_' + str(random.randint(1000, 9999)))
 
-    # 娓呯悊鏃ф畫鐣?    if os.path.exists(tmp_dir):
+    # 清理旧残留
+    if os.path.exists(tmp_dir):
         try:
             shutil.rmtree(tmp_dir)
         except Exception:
@@ -262,7 +286,7 @@ def modify_office_internal(file_path: str, edit_minutes: int,
     os.makedirs(tmp_dir)
 
     try:
-        # 瑙ｅ帇
+        # 解压
         with zipfile.ZipFile(file_path, 'r') as z:
             z.extractall(tmp_dir)
 
@@ -278,7 +302,7 @@ def modify_office_internal(file_path: str, edit_minutes: int,
             total.text = str(edit_minutes)
             tree.write(app_xml, xml_declaration=True, encoding='UTF-8')
 
-        # === core.xml: 鍒涘缓鏃堕棿 + 淇敼鏃堕棿 ===
+        # === core.xml: 创建时间 + 修改时间 ===
         core_xml = os.path.join(tmp_dir, 'docProps', 'core.xml')
         if os.path.exists(core_xml) and create_dt and modify_dt:
             tree = ET.parse(core_xml)
@@ -290,17 +314,19 @@ def modify_office_internal(file_path: str, edit_minutes: int,
             create_utc = create_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
             modify_utc = modify_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-            # 鏇存柊 dcterms:created锛圵ord灞炴€у璇濇涓殑"鍒涘缓鏃堕棿"锛?            for el in root.iter(dct_ns + 'created'):
+            # 更新 dcterms:created（Word属性对话框中的"创建时间"）
+            for el in root.iter(dct_ns + 'created'):
                 el.set(f'{{{xsi_ns}}}type', 'dcterms:W3CDTF')
                 el.text = create_utc
 
-            # 鏇存柊 dcterms:modified锛圵ord灞炴€у璇濇涓殑"淇敼鏃堕棿"锛?            for el in root.iter(dct_ns + 'modified'):
+            # 更新 dcterms:modified（Word属性对话框中的"修改时间"）
+            for el in root.iter(dct_ns + 'modified'):
                 el.set(f'{{{xsi_ns}}}type', 'dcterms:W3CDTF')
                 el.text = modify_utc
 
             tree.write(core_xml, xml_declaration=True, encoding='UTF-8')
 
-        # 閲嶆柊鎵撳寘
+        # 重新打包
         new_file = file_path + '.tmp'
         with zipfile.ZipFile(new_file, 'w', zipfile.ZIP_DEFLATED) as z:
             for rd, dirs, files in os.walk(tmp_dir):
@@ -308,11 +334,12 @@ def modify_office_internal(file_path: str, edit_minutes: int,
                     fp = os.path.join(rd, fn)
                     z.write(fp, os.path.relpath(fp, tmp_dir))
 
-        # 鏇挎崲鍘熸枃浠?        os.remove(file_path)
+        # 替换原文件
+        os.remove(file_path)
         os.rename(new_file, file_path)
 
     finally:
-        # 娓呯悊涓存椂鐩綍
+        # 清理临时目录
         if os.path.exists(tmp_dir):
             try:
                 shutil.rmtree(tmp_dir)
@@ -327,7 +354,10 @@ def set_file_system_times(file_path: str,
                            modify: datetime,
                            access: datetime) -> bool:
     """
-    璁剧疆鏂囦欢绯荤粺鏃堕棿灞炴€?    - 鏂囦欢澶癸細浣跨敤 Python os.utime + Windows API锛圫etFileTime锛?    - 鏂囦欢锛氫娇鐢?os.utime锛堝厛灏濊瘯锛屽け璐ュ垯鐢?PowerShell锛?    """
+    设置文件系统时间属性
+    - 文件夹：使用 Python os.utime + Windows API（SetFileTime）
+    - 文件：使用 os.utime（先尝试，失败则用 PowerShell）
+    """
     if os.path.isdir(file_path):
         return _set_folder_times(file_path, create, modify, access)
     else:
@@ -335,11 +365,12 @@ def set_file_system_times(file_path: str,
 
 
 def _utc_offset_hours() -> int:
-    """鑾峰彇褰撳墠鏃跺尯涓嶶TC鐨勫亸绉婚噺锛堝皬鏃讹級锛學indows涓撶敤"""
-    # time.timezone 鏄粠鏈湴鏃堕棿寰€UTC璧扮殑鍋忕Щ锛堢锛夛紝west涓烘
-    # time.altzone 鏄浠ゆ椂鍋忕Щ锛堝鏋滄湁锛?    # UTC+8: time.timezone = -28800 (8*3600), time.altzone = -28800
+    """获取当前时区与UTC的偏移量（小时），Windows专用"""
+    # time.timezone 是从本地时间往UTC走的偏移（秒），west为正
+    # time.altzone 是夏令时偏移（如果有）
+    # UTC+8: time.timezone = -28800 (8*3600), time.altzone = -28800
     offset_sec = time.timezone if time.daylight == 0 else time.altzone
-    return -offset_sec // 3600  # UTC+8 鈫?+8
+    return -offset_sec // 3600  # UTC+8 → +8
 
 
 def _set_file_times(file_path: str,
@@ -347,18 +378,20 @@ def _set_file_times(file_path: str,
                      modify: datetime,
                      access: datetime) -> bool:
     """
-    鐢?Python os 璁剧疆鏂囦欢鏃堕棿锛堣法骞冲彴锛屼笉渚濊禆 PowerShell锛?    """
+    用 Python os 设置文件时间（跨平台，不依赖 PowerShell）
+    """
     try:
         import ctypes
         from ctypes import wintypes
 
-        # os.utime 璁剧疆 modify 鍜?access锛堣繖涓や釜鐢?datetime.timestamp() 姝ｇ‘杞崲锛?        access_ts = access.timestamp()
+        # os.utime 设置 modify 和 access（这两个用 datetime.timestamp() 正确转换）
+        access_ts = access.timestamp()
         modify_ts = modify.timestamp()
         os.utime(file_path, (access_ts, modify_ts))
 
-        # 鍒涘缓鏃堕棿鐢?Windows API SetFileTime
-        # 娉ㄦ剰锛歋etFileTime 鎺ユ敹 UTC 鏃堕棿
-        # 杈撳叆鐨?datetime 鏄湰鍦版椂闂达紙CST锛夛紝闇€瑕佽浆 UTC
+        # 创建时间用 Windows API SetFileTime
+        # 注意：SetFileTime 接收 UTC 时间
+        # 输入的 datetime 是本地时间（CST），需要转 UTC
         # Windows FILETIME = 100-ns ticks since 1601-01-01 UTC
         kernel32 = ctypes.windll.kernel32
 
@@ -367,7 +400,7 @@ def _set_file_times(file_path: str,
                         ('dwHighDateTime', wintypes.DWORD)]
 
         def dt_to_filetime_utc(dt: datetime) -> FILETIME:
-            # 灏嗘湰鍦版椂闂磋浆涓?UTC 鍐嶇畻 FILETIME
+            # 将本地时间转为 UTC 再算 FILETIME
             utc_offset = _utc_offset_hours()
             utc_dt = dt - timedelta(hours=utc_offset)
             epoch = datetime(1601, 1, 1)
@@ -395,15 +428,16 @@ def _set_folder_times(folder_path: str,
                        create: datetime,
                        modify: datetime,
                        access: datetime) -> bool:
-    """璁剧疆鏂囦欢澶规椂闂村睘鎬э紙Windows 涓撶敤锛?""
+    """设置文件夹时间属性（Windows 专用）"""
     try:
         import ctypes
         from ctypes import wintypes
 
-        # 淇敼鏃堕棿鍜岃闂椂闂寸敤 os.utime
+        # 修改时间和访问时间用 os.utime
         os.utime(folder_path, (access.timestamp(), modify.timestamp()))
 
-        # 鍒涘缓鏃堕棿鐢?Windows API SetFileTime锛堥渶瑕?UTC锛?        kernel32 = ctypes.windll.kernel32
+        # 创建时间用 Windows API SetFileTime（需要 UTC）
+        kernel32 = ctypes.windll.kernel32
 
         class FILETIME(ctypes.Structure):
             _fields_ = [('dwLowDateTime', wintypes.DWORD),
@@ -434,7 +468,7 @@ def _set_folder_times(folder_path: str,
 
 
 def close_office_processes():
-    """鍏抽棴鍙兘鍗犵敤鏂囦欢鐨?Office 杩涚▼"""
+    """关闭可能占用文件的 Office 进程"""
     for proc in ['WINWORD', 'EXCEL', 'POWERPNT']:
         try:
             subprocess.run(['taskkill', '/F', '/IM', f'{proc}.EXE'],
@@ -443,134 +477,166 @@ def close_office_processes():
             pass
 
 
-def confirm_future_times(future_times: list, now: datetime) -> bool:
-    """纭鏄惁璁剧疆鏈潵鏃堕棿"""
-    print("\n" + "=" * 60)
-    print("鈿狅笍  璀﹀憡锛氫互涓嬫椂闂磋秴杩囧綋鍓嶆椂闂?)
-    print("=" * 60)
-    for t in future_times:
-        print(f"  鈥?{t}")
-    print(f"\n褰撳墠鏃堕棿锛歿now.strftime('%Y-%m-%d %H:%M:%S')}")
-    print("-" * 60)
-    try:
-        resp = input("鏄惁缁х画鎵ц锛?y/N): ").strip().lower()
-        return resp in ['y', 'yes']
-    except Exception:
-        print("闈炰氦浜掓ā寮忥紝宸插彇娑堛€備娇鐢?--force 寮哄埗鎵ц銆?)
-        return False
-
-
 def main():
-    parser = argparse.ArgumentParser(description='鏂囦欢鏃堕棿灞炴€т慨鏀?v1.1')
-    parser.add_argument('--file', required=True, help='鐩爣鏂囦欢璺緞')
-    parser.add_argument('--edit-duration', help='缂栬緫鏃堕暱锛屽 "2灏忔椂"銆?120鍒嗛挓"')
-    parser.add_argument('--create-time', help='鍒涘缓鏃堕棿锛屽 "2024-01-15 09:30:00"')
-    parser.add_argument('--modify-time', help='淇敼鏃堕棿锛屽 "2026-04-18 14:00:00"')
-    parser.add_argument('--access-time', help='璁块棶鏃堕棿锛堝彲閫夛級')
-    parser.add_argument('--base-time', help='鍙傝€冩椂闂达紝濡?"2026-04-18 14:30:00"')
-    parser.add_argument('--dry-run', action='store_true', help='鍙樉绀鸿绠楃粨鏋滐紝涓嶅疄闄呬慨鏀?)
-    parser.add_argument('--force', action='store_true', help='寮哄埗鎵ц锛岃烦杩囨湭鏉ユ椂闂寸‘璁?)
+    parser = argparse.ArgumentParser(description='文件时间属性修改 v1.1')
+    parser.add_argument('--file', required=True, help='目标文件路径')
+    parser.add_argument('--edit-duration', help='编辑时长，如 "2小时"、"120分钟"、"3h"')
+    parser.add_argument(
+        '--total-edit-minutes', type=int,
+        help='总编辑时长（分钟），优先级高于 --edit-duration，用于 "分多天编辑共X小时" 场景'
+    )
+    parser.add_argument('--create-time', help='创建时间，如 "2024-01-15 09:30:00"')
+    parser.add_argument('--modify-time', help='修改时间，如 "2026-04-18 14:00:00"')
+    parser.add_argument('--access-time', help='访问时间（可选）')
+    parser.add_argument('--base-time', help='参考时间（默认当前时间）')
+    parser.add_argument('--dry-run', action='store_true', help='只显示计算结果，不实际修改')
+    parser.add_argument('--force', action='store_true', help='强制执行，跳过未来时间确认')
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.file):
-        print(json.dumps({'status': 'error',
-                           'message': f'鏂囦欢涓嶅瓨鍦? {args.file}'}, ensure_ascii=False))
-        return
-
-    # 瑙ｆ瀽缂栬緫鏃堕暱
+    # ── 解析编辑时长 ─────────────────────────────────────────────
+    # --total-edit-minutes > --edit-duration > 自动从 create+modify 差值算
     edit_minutes = None
     edit_seconds = None
     requested_duration = None
 
-    if args.edit_duration:
+    if args.total_edit_minutes is not None:
+        # 用户显式指定总编辑分钟数（独立于时间锚点）
+        edit_minutes, edit_seconds = randomize_duration(args.total_edit_minutes)
+        requested_duration = f"{args.total_edit_minutes}分钟（指定）"
+    elif args.edit_duration:
         requested_duration = args.edit_duration
         parsed = parse_duration(args.edit_duration)
         if parsed > 0:
             edit_minutes, edit_seconds = randomize_duration(parsed)
 
-    # 瑙ｆ瀽鏃堕棿
+    # ── 解析时间锚点 ──────────────────────────────────────────────
     create_time = modify_time = access_time = base_time = None
-    if args.create_time:
+
+    def _parse(t):
         try:
-            create_time = parse_time_str(args.create_time)
-        except ValueError as e:
+            return parse_time_str(t)
+        except ValueError:
+            return None
+
+    if args.create_time:
+        create_time = _parse(args.create_time)
+        if create_time is None:
             print(json.dumps({'status': 'error',
-                               'message': f'鍒涘缓鏃堕棿鏍煎紡閿欒: {args.create_time}'}, ensure_ascii=False))
+                               'message': f'创建时间格式错误: {args.create_time}'}, ensure_ascii=False))
             return
     if args.modify_time:
-        try:
-            modify_time = parse_time_str(args.modify_time)
-        except ValueError as e:
+        modify_time = _parse(args.modify_time)
+        if modify_time is None:
             print(json.dumps({'status': 'error',
-                               'message': f'淇敼鏃堕棿鏍煎紡閿欒: {args.modify_time}'}, ensure_ascii=False))
+                               'message': f'修改时间格式错误: {args.modify_time}'}, ensure_ascii=False))
             return
     if args.access_time:
-        try:
-            access_time = parse_time_str(args.access_time)
-        except ValueError as e:
-            print(json.dumps({'status': 'error',
-                               'message': f'璁块棶鏃堕棿鏍煎紡閿欒: {args.access_time}'}, ensure_ascii=False))
-            return
+        access_time = _parse(args.access_time)
     if args.base_time:
-        try:
-            base_time = parse_time_str(args.base_time)
-        except ValueError as e:
-            print(json.dumps({'status': 'error',
-                               'message': f'鍩哄噯鏃堕棿鏍煎紡閿欒: {args.base_time}'}, ensure_ascii=False))
-            return
+        base_time = _parse(args.base_time)
 
-    # 璁＄畻鏃堕棿
-    times = calculate_times_v2(
-        edit_minutes=edit_minutes,
-        edit_seconds=edit_seconds,
-        create_time=create_time,
-        modify_time=modify_time,
-        access_time=access_time,
-        base_time=base_time
-    )
+    # ── 组合逻辑 ─────────────────────────────────────────────────
+    # 优先：全部锚定（create + modify + duration）
+    # 其次：create + modify → 自动算 duration
+    # 其次：create + duration → 算 modify
+    # 其次：modify + duration → 算 create
+    # 最后：只有 duration → 从当前往回推
 
-    # 鏈潵鏃堕棿纭
+    warnings = []
     now = datetime.now()
+    if base_time is None:
+        base_time = now
+
+    if create_time and modify_time:
+        # Case C/D: 两端锚定
+        if create_time >= modify_time:
+            print(json.dumps({'status': 'error',
+                               'message': '创建时间不能晚于修改时间'}, ensure_ascii=False))
+            return
+        if edit_minutes is None:
+            # 自动从差值算
+            diff_min = int((modify_time - create_time).total_seconds() / 60)
+            edit_minutes, edit_seconds = randomize_duration(diff_min)
+            requested_duration = f"{diff_min}分钟（自动）"
+        # 注意：如果用户也给了 total-edit-minutes，保持用那个值
+        access_time = modify_time + timedelta(minutes=random.randint(3, 15))
+        # 创建时间可能在工作时间外 → 警告
+        if not (8 <= create_time.hour < 22):
+            warnings.append(f"创建时间 {create_time.strftime('%H:%M')} 不在工作时间(08:00-22:00)内")
+    elif create_time and edit_minutes is not None:
+        # Case A: 从创建时间往后推
+        modify_time = create_time + timedelta(
+            minutes=edit_minutes, seconds=random.randint(0, 119))
+        access_time = modify_time + timedelta(minutes=random.randint(3, 15))
+        if not (8 <= create_time.hour < 22):
+            warnings.append(f"创建时间 {create_time.hour}:00 不在工作时间(08:00-22:00)内")
+    elif modify_time and edit_minutes is not None:
+        # Case B: 从修改时间往前推
+        delta = timedelta(minutes=edit_minutes, seconds=random.randint(0, 119))
+        create_time = modify_time - delta
+        # 调整到工作时间
+        create_time = adjust_to_work_time(create_time)
+        access_time = modify_time + timedelta(minutes=random.randint(3, 15))
+    elif edit_minutes is not None:
+        # Case E: 只有 duration，从当前往回推
+        modify_time = base_time
+        create_time = base_time - timedelta(
+            minutes=edit_minutes, seconds=random.randint(0, 119))
+        create_time = adjust_to_work_time(create_time)
+        access_time = modify_time + timedelta(minutes=random.randint(3, 15))
+    else:
+        print(json.dumps({'status': 'error',
+                           'message': '至少需要提供编辑时长或时间锚点之一'}, ensure_ascii=False))
+        return
+
+    # 秒数随机化（已在上面各分支处理）
+    create_time = create_time.replace(second=random.randint(0, 59), microsecond=0)
+    modify_time = modify_time.replace(second=random.randint(0, 59), microsecond=0)
+
+    # ── 未来时间确认 ──────────────────────────────────────────────
     future_times = []
-    for key in ['create', 'modify', 'access']:
-        t = times[key]
+    for key, t in [('create', create_time), ('modify', modify_time),
+                    ('access', access_time)]:
         if t and t > now:
             future_times.append(f"{key}: {t.strftime('%Y-%m-%d %H:%M:%S')}")
 
     if future_times and not args.dry_run and not args.force:
         if not confirm_future_times(future_times, now):
-            print(json.dumps({'status': 'cancelled',
-                               'message': '鐢ㄦ埛鍙栨秷鎿嶄綔'}, ensure_ascii=False))
+            print(json.dumps({'status': 'cancelled'}, ensure_ascii=False))
             return
 
-    # 鏋勫缓杈撳嚭
+    # ── 构建输出 ─────────────────────────────────────────────────
     result = {
         'status': 'ok',
         'file': args.file,
         'times': {
-            k: times[k].strftime('%Y-%m-%d %H:%M:%S')
-            for k in ['create', 'modify', 'access']
+            'create': create_time.strftime('%Y-%m-%d %H:%M:%S'),
+            'modify': modify_time.strftime('%Y-%m-%d %H:%M:%S'),
+            'access': access_time.strftime('%Y-%m-%d %H:%M:%S'),
         },
         'edit_duration': {
             'requested': requested_duration,
-            'parsed_minutes': edit_minutes,
-            'actual_minutes': times['edit_minutes'],
-            'actual_seconds': times['edit_seconds']
+            'actual_minutes': edit_minutes,
+            'actual_seconds': edit_seconds,
         },
         'dry_run': args.dry_run
     }
 
-    warnings = []
-    if 'work_time_warning' in times:
-        warnings.append(times['work_time_warning'])
-
-    file_exist_min = int((times['modify'] - times['create']).total_seconds() / 60)
-    if edit_minutes and edit_minutes > file_exist_min:
-        warnings.append(
-            f"缂栬緫鏃堕暱({edit_minutes}鍒嗛挓)瓒呰繃鏂囦欢瀛樺湪鏃堕棿({file_exist_min}鍒嗛挓)锛?
-            f"宸茶皟鏁翠负{times['edit_minutes']}鍒嗛挓"
-        )
+    # 计算时间跨度
+    if create_time and modify_time:
+        span_min = int((modify_time - create_time).total_seconds() / 60)
+        result['time_span'] = {
+            'minutes': span_min,
+            'description': f'创建到修改共 {span_min} 分钟'
+        }
+        # 逻辑一致性检查
+        if edit_minutes and edit_minutes > span_min:
+            warnings.append(
+                f"编辑时长({edit_minutes}min) > 时间跨度({span_min}min)，"
+                f"已调整为{span_min}min"
+            )
+            edit_minutes = span_min  # 不能超
 
     if warnings:
         result['warnings'] = warnings
@@ -579,35 +645,67 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
-    # 瀹為檯淇敼
+    # ── 实际修改 ─────────────────────────────────────────────────
+    # 文件存在检查（非 dry-run 时执行）
+    if not os.path.exists(args.file):
+        print(json.dumps({'status': 'error',
+                           'message': f'文件不存在: {args.file}'}, ensure_ascii=False))
+        return
+
     try:
         close_office_processes()
 
         ext = os.path.splitext(args.file)[1].lower()
-        if ext in ['.docx', '.pptx', '.xlsx'] and times['edit_minutes']:
+        if ext in ['.docx', '.pptx', '.xlsx'] and edit_minutes:
             ok = modify_office_internal(
-                args.file, times['edit_minutes'],
-                create_dt=times['create'], modify_dt=times['modify']
+                args.file, edit_minutes,
+                create_dt=create_time, modify_dt=modify_time
             )
             result['office_internal'] = {
-                'app_total_time': times['edit_minutes'],
-                'core_created': times['create'].strftime('%Y-%m-%dT%H:%M:%SZ'),
-                'core_modified': times['modify'].strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'app_total_time': edit_minutes,
+                'core_created': create_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'core_modified': modify_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                 'success': ok
             }
 
         success = set_file_system_times(
-            args.file, times['create'], times['modify'], times['access'])
+            args.file, create_time, modify_time, access_time)
         result['file_system'] = {'success': success}
-        if not success:
-            result['status'] = 'warning'
-            result['message'] = '鏂囦欢绯荤粺鏃堕棿璁剧疆鍙兘鏈畬鍏ㄦ垚鍔?
 
     except Exception as e:
         result['status'] = 'error'
         result['message'] = str(e)
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def adjust_to_work_time(dt: datetime) -> datetime:
+    """如果时间不在工作时间(08:00-22:00)内，调整到最近的次日08:00"""
+    if 8 <= dt.hour < 22:
+        return dt
+    # 往前找：如果是深夜，移到次日08:00
+    next_day = dt.date() if dt.hour >= 0 else (dt - timedelta(days=1)).date()
+    return datetime.combine(next_day, datetime.min.time()).replace(hour=8)
+
+
+def confirm_future_times(future_times: list, now: datetime) -> bool:
+    """显示未来时间警告，返回用户是否确认继续"""
+    msg = [
+        "=" * 60,
+        "\u26a0  警告：以下时间超过当前时间",
+        "=" * 60,
+    ]
+    for ft in future_times:
+        msg.append(f"  \u2022 {ft}")
+    msg.append(f"\n当前时间：{now.strftime('%Y-%m-%d %H:%M:%S')}")
+    msg.append("\n这可能是一个不合理的设置（文件来自未来？）")
+    msg.append("-" * 60)
+    msg.append("是否继续执行？(y/N): ")
+    print('\n'.join(msg), end='')
+    try:
+        return input().strip().lower() == 'y'
+    except (EOFError, IOError):
+        return False
 
 
 if __name__ == '__main__':
