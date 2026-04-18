@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-file-time-magic — 文件时间属性修改脚本 v1.1
+file-time-magic -- File Time Attribute Modifier v1.1.1.1
 
-功能：
-1. 解析用户输入的编辑时长（支持多种格式）
+功能:
+1. 解析用户输入的编辑时长(支持多种格式)
 2. 支持用户指定创建时间、修改时间
-3. 计算随机化的时间（分钟有误差，秒数随机）
-4. 修改 Office 文件内部 XML（TotalTime 属性 + core.xml 创建/修改时间）
+3. 计算随机化的时间(分钟有误差,秒数随机)
+4. 修改 Office 文件内部 XML(TotalTime 属性 + core.xml 创建/修改时间)
 5. 设置文件系统时间属性
 
-使用：
+使用:
   python set_file_time.py --file "文件路径" --edit-duration "2小时"
   python set_file_time.py --file "文件路径" --create-time "2024-01-15 09:30:00" --edit-duration "3小时"
   python set_file_time.py --file "文件路径" --modify-time "2026-04-18 14:00:00" --edit-duration "90分钟"
   python set_file_time.py --file "文件路径" --create-time "2024-01-15 09:00:00" --modify-time "2026-04-18 14:00:00"
+  python set_file_time.py --file "文件路径" --create-time "2026-04-17 09:00" --modify-time "2026-04-18 18:00" --total-edit-minutes 480
 """
 
 import argparse
@@ -370,7 +371,7 @@ def _utc_offset_hours() -> int:
     # time.altzone 是夏令时偏移（如果有）
     # UTC+8: time.timezone = -28800 (8*3600), time.altzone = -28800
     offset_sec = time.timezone if time.daylight == 0 else time.altzone
-    return -offset_sec // 3600  # UTC+8 → +8
+    return -offset_sec // 3600  # UTC+8 -> +8
 
 
 def _set_file_times(file_path: str,
@@ -478,7 +479,7 @@ def close_office_processes():
 
 
 def main():
-    parser = argparse.ArgumentParser(description='文件时间属性修改 v1.1')
+    parser = argparse.ArgumentParser(description='文件时间属性修改 v1.1.1')
     parser.add_argument('--file', required=True, help='目标文件路径')
     parser.add_argument('--edit-duration', help='编辑时长，如 "2小时"、"120分钟"、"3h"')
     parser.add_argument(
@@ -494,7 +495,7 @@ def main():
 
     args = parser.parse_args()
 
-    # ── 解析编辑时长 ─────────────────────────────────────────────
+    # -- 解析编辑时长 ---------------------------------------------
     # --total-edit-minutes > --edit-duration > 自动从 create+modify 差值算
     edit_minutes = None
     edit_seconds = None
@@ -510,7 +511,7 @@ def main():
         if parsed > 0:
             edit_minutes, edit_seconds = randomize_duration(parsed)
 
-    # ── 解析时间锚点 ──────────────────────────────────────────────
+    # -- 解析时间锚点 ----------------------------------------------
     create_time = modify_time = access_time = base_time = None
 
     def _parse(t):
@@ -536,12 +537,12 @@ def main():
     if args.base_time:
         base_time = _parse(args.base_time)
 
-    # ── 组合逻辑 ─────────────────────────────────────────────────
+    # -- 组合逻辑 -------------------------------------------------
     # 优先：全部锚定（create + modify + duration）
-    # 其次：create + modify → 自动算 duration
-    # 其次：create + duration → 算 modify
-    # 其次：modify + duration → 算 create
-    # 最后：只有 duration → 从当前往回推
+    # 其次：create + modify -> 自动算 duration
+    # 其次：create + duration -> 算 modify
+    # 其次：modify + duration -> 算 create
+    # 最后：只有 duration -> 从当前往回推
 
     warnings = []
     now = datetime.now()
@@ -561,7 +562,7 @@ def main():
             requested_duration = f"{diff_min}分钟（自动）"
         # 注意：如果用户也给了 total-edit-minutes，保持用那个值
         access_time = modify_time + timedelta(minutes=random.randint(3, 15))
-        # 创建时间可能在工作时间外 → 警告
+        # 创建时间可能在工作时间外 -> 警告
         if not (8 <= create_time.hour < 22):
             warnings.append(f"创建时间 {create_time.strftime('%H:%M')} 不在工作时间(08:00-22:00)内")
     elif create_time and edit_minutes is not None:
@@ -594,7 +595,7 @@ def main():
     create_time = create_time.replace(second=random.randint(0, 59), microsecond=0)
     modify_time = modify_time.replace(second=random.randint(0, 59), microsecond=0)
 
-    # ── 未来时间确认 ──────────────────────────────────────────────
+    # -- 未来时间确认 ----------------------------------------------
     future_times = []
     for key, t in [('create', create_time), ('modify', modify_time),
                     ('access', access_time)]:
@@ -606,7 +607,7 @@ def main():
             print(json.dumps({'status': 'cancelled'}, ensure_ascii=False))
             return
 
-    # ── 构建输出 ─────────────────────────────────────────────────
+    # -- 构建输出 -------------------------------------------------
     result = {
         'status': 'ok',
         'file': args.file,
@@ -645,7 +646,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
-    # ── 实际修改 ─────────────────────────────────────────────────
+    # -- 实际修改 -------------------------------------------------
     # 文件存在检查（非 dry-run 时执行）
     if not os.path.exists(args.file):
         print(json.dumps({'status': 'error',
